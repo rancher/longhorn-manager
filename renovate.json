@@ -1,5 +1,5 @@
 {
-  "extends": ["github>rancher/suse-storage-mgmt:renovate-default"],
+  "extends": ["github>rancher/suse-storage:renovate-default"],
   "packageRules": [
     {
       "matchBaseBranches": ["master", "main", "/^v\\d+\\.\\d+\\.x/"],
