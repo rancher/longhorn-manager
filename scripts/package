@@ -30,6 +30,9 @@ BUILDX_ARGS=()
 
 if [[ "${PUSH}" == 'true' ]]; then
     BUILDX_ARGS+=('--push')
+elif [[ "${TARGET_PLATFORMS}" == *,* ]]; then
+    # The docker exporter behind --load cannot load a multi-platform image.
+    BUILDX_ARGS+=('--output' 'type=cacheonly')
 else
     BUILDX_ARGS+=('--load')
 fi
