@@ -26,7 +26,9 @@ buildx-machine:
 # - TAG: image tag
 # - TARGET_PLATFORMS: optional, to be passed for buildx's --platform option
 # - IID_FILE_FLAG: optional, options to generate image ID file
-.PHONY: workflow-image-build-push workflow-image-build-push-secure
+.PHONY: workflow-image-build workflow-image-build-push workflow-image-build-push-secure
+workflow-image-build: buildx-machine
+	MACHINE=$(MACHINE) PUSH='false' IMAGE_NAME=$(PROJECT) bash scripts/package
 workflow-image-build-push: buildx-machine
 	MACHINE=$(MACHINE) PUSH='true' IMAGE_NAME=$(PROJECT) bash scripts/package
 workflow-image-build-push-secure: buildx-machine
