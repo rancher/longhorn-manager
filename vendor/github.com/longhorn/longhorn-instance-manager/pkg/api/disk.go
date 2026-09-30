@@ -13,6 +13,7 @@ type DiskInfo struct {
 	FreeBlocks  int64
 	BlockSize   int64
 	ClusterSize int64
+	State       string
 }
 
 // ReplicaStorageInstance is utilized to represent a replica directory of a legacy volume and
@@ -24,4 +25,37 @@ type ReplicaStorageInstance struct {
 	DiskUUID   string
 	SpecSize   uint64
 	ActualSize uint64
+}
+
+type DiskMetrics struct {
+	ReadThroughput  uint64
+	WriteThroughput uint64
+	ReadLatency     uint64
+	WriteLatency    uint64
+	ReadIOPS        uint64
+	WriteIOPS       uint64
+}
+
+type DiskHealth struct {
+	ModelNumber                             string
+	SerialNumber                            string
+	FirmwareRevision                        string
+	Traddr                                  string
+	CriticalWarning                         uint32
+	TemperatureCelsius                      float64
+	AvailableSparePercentage                uint32
+	AvailableSpareThresholdPercentage       uint32
+	PercentageUsed                          uint32
+	DataUnitsRead                           uint64
+	DataUnitsWritten                        uint64
+	HostReadCommands                        uint64
+	HostWriteCommands                       uint64
+	ControllerBusyTime                      uint64
+	PowerCycles                             uint64
+	PowerOnHours                            uint64
+	UnsafeShutdowns                         uint64
+	MediaErrors                             uint64
+	NumErrLogEntries                        uint64
+	WarningTemperatureTimeMinutes           uint64
+	CriticalCompositeTemperatureTimeMinutes uint64
 }

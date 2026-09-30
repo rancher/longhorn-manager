@@ -3,20 +3,24 @@ package client
 import (
 	"fmt"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
+
+	"github.com/longhorn/types/pkg/generated/enginerpc"
 
 	etypes "github.com/longhorn/longhorn-engine/pkg/types"
 	eutil "github.com/longhorn/longhorn-engine/pkg/util"
-	"github.com/longhorn/types/pkg/generated/enginerpc"
 	rpc "github.com/longhorn/types/pkg/generated/imrpc"
 )
 
-func (c *ProxyClient) VolumeSnapshot(dataEngine, engineName, volumeName, serviceAddress,
+func (c *ProxyClient) VolumeSnapshot(dataEngine, engineName, engineFrontendName, volumeName, serviceAddress,
 	volumeSnapshotName string, labels map[string]string, freezeFilesystem bool) (snapshotName string, err error) {
 	input := map[string]string{
 		"engineName":     engineName,
 		"volumeName":     volumeName,
 		"serviceAddress": serviceAddress,
+	}
+	if dataEngine == dataEngineV2 {
+		input["engineFrontendName"] = engineFrontendName
 	}
 	if err := validateProxyMethodParameters(input); err != nil {
 		return "", errors.Wrap(err, "failed to snapshot volume")
@@ -47,8 +51,9 @@ func (c *ProxyClient) VolumeSnapshot(dataEngine, engineName, volumeName, service
 
 	req := &rpc.EngineVolumeSnapshotRequest{
 		ProxyEngineRequest: &rpc.ProxyEngineRequest{
-			Address:    serviceAddress,
-			EngineName: engineName,
+			Address:            serviceAddress,
+			EngineName:         engineName,
+			EngineFrontendName: engineFrontendName,
 			// nolint:all replaced with DataEngine
 			BackendStoreDriver: rpc.BackendStoreDriver(driver),
 			DataEngine:         rpc.DataEngine(driver),
@@ -60,11 +65,12 @@ func (c *ProxyClient) VolumeSnapshot(dataEngine, engineName, volumeName, service
 			FreezeFilesystem: freezeFilesystem,
 		},
 	}
-	recv, err := c.service.VolumeSnapshot(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	recv, err := c.service.VolumeSnapshot(ctx, req)
 	if err != nil {
 		return "", err
 	}
-
 	return recv.Snapshot.Name, nil
 }
 
@@ -96,7 +102,9 @@ func (c *ProxyClient) SnapshotList(dataEngine, engineName, volumeName,
 		DataEngine:         rpc.DataEngine(driver),
 		VolumeName:         volumeName,
 	}
-	resp, err := c.service.SnapshotList(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	resp, err := c.service.SnapshotList(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +132,8 @@ func (c *ProxyClient) SnapshotList(dataEngine, engineName, volumeName,
 }
 
 func (c *ProxyClient) SnapshotClone(dataEngine, engineName, volumeName, serviceAddress,
-	snapshotName, fromEngineAddress, fromVolumeName, fromEngineName string, fileSyncHTTPClientTimeout int, grpcTimeoutSeconds int64) (err error) {
+	snapshotName, fromEngineAddress, fromVolumeName, fromEngineName string, fileSyncHTTPClientTimeout int,
+	grpcTimeoutSeconds int64, cloneMode string, dstReplicaSrcReplicaPairMap map[string]string) (err error) {
 	input := map[string]string{
 		"engineName":        engineName,
 		"volumeName":        volumeName,
@@ -157,15 +166,19 @@ func (c *ProxyClient) SnapshotClone(dataEngine, engineName, volumeName, serviceA
 			DataEngine:         rpc.DataEngine(driver),
 			VolumeName:         volumeName,
 		},
-		FromEngineAddress:         fromEngineAddress,
-		SnapshotName:              snapshotName,
-		ExportBackingImageIfExist: false,
-		FileSyncHttpClientTimeout: int32(fileSyncHTTPClientTimeout),
-		FromEngineName:            fromEngineName,
-		FromVolumeName:            fromVolumeName,
-		GrpcTimeoutSeconds:        grpcTimeoutSeconds,
+		FromEngineAddress:           fromEngineAddress,
+		SnapshotName:                snapshotName,
+		ExportBackingImageIfExist:   false,
+		FileSyncHttpClientTimeout:   int32(fileSyncHTTPClientTimeout),
+		FromEngineName:              fromEngineName,
+		FromVolumeName:              fromVolumeName,
+		GrpcTimeoutSeconds:          grpcTimeoutSeconds,
+		CloneMode:                   getCloneMode(cloneMode),
+		DstReplicaSrcReplicaPairMap: dstReplicaSrcReplicaPairMap,
 	}
-	_, err = c.service.SnapshotClone(getContextWithGRPCLongTimeout(c.ctx, grpcTimeoutSeconds), req)
+	ctx, cancel := getContextWithGRPCLongTimeout(c.ctx, grpcTimeoutSeconds)
+	defer cancel()
+	_, err = c.service.SnapshotClone(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -200,7 +213,9 @@ func (c *ProxyClient) SnapshotCloneStatus(dataEngine, engineName, volumeName, se
 		DataEngine:         rpc.DataEngine(driver),
 		VolumeName:         volumeName,
 	}
-	recv, err := c.service.SnapshotCloneStatus(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	recv, err := c.service.SnapshotCloneStatus(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -219,13 +234,16 @@ func (c *ProxyClient) SnapshotCloneStatus(dataEngine, engineName, volumeName, se
 	return status, nil
 }
 
-func (c *ProxyClient) SnapshotRevert(dataEngine, engineName, volumeName, serviceAddress string,
+func (c *ProxyClient) SnapshotRevert(dataEngine, engineName, engineFrontendName, volumeName, serviceAddress string,
 	name string) (err error) {
 	input := map[string]string{
 		"engineName":     engineName,
 		"volumeName":     volumeName,
 		"serviceAddress": serviceAddress,
 		"name":           name,
+	}
+	if dataEngine == dataEngineV2 {
+		input["engineFrontendName"] = engineFrontendName
 	}
 	if err := validateProxyMethodParameters(input); err != nil {
 		return errors.Wrap(err, "failed to revert volume to snapshot")
@@ -247,8 +265,9 @@ func (c *ProxyClient) SnapshotRevert(dataEngine, engineName, volumeName, service
 
 	req := &rpc.EngineSnapshotRevertRequest{
 		ProxyEngineRequest: &rpc.ProxyEngineRequest{
-			Address:    serviceAddress,
-			EngineName: engineName,
+			Address:            serviceAddress,
+			EngineName:         engineName,
+			EngineFrontendName: engineFrontendName,
 			// nolint:all replaced with DataEngine
 			BackendStoreDriver: rpc.BackendStoreDriver(driver),
 			DataEngine:         rpc.DataEngine(driver),
@@ -256,7 +275,9 @@ func (c *ProxyClient) SnapshotRevert(dataEngine, engineName, volumeName, service
 		},
 		Name: name,
 	}
-	_, err = c.service.SnapshotRevert(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.SnapshotRevert(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -264,12 +285,15 @@ func (c *ProxyClient) SnapshotRevert(dataEngine, engineName, volumeName, service
 	return nil
 }
 
-func (c *ProxyClient) SnapshotPurge(dataEngine, engineName, volumeName, serviceAddress string,
+func (c *ProxyClient) SnapshotPurge(dataEngine, engineName, engineFrontendName, volumeName, serviceAddress string,
 	skipIfInProgress bool) (err error) {
 	input := map[string]string{
 		"engineName":     engineName,
 		"volumeName":     volumeName,
 		"serviceAddress": serviceAddress,
+	}
+	if dataEngine == dataEngineV2 {
+		input["engineFrontendName"] = engineFrontendName
 	}
 	if err := validateProxyMethodParameters(input); err != nil {
 		return errors.Wrap(err, "failed to purge snapshots")
@@ -286,8 +310,9 @@ func (c *ProxyClient) SnapshotPurge(dataEngine, engineName, volumeName, serviceA
 
 	req := &rpc.EngineSnapshotPurgeRequest{
 		ProxyEngineRequest: &rpc.ProxyEngineRequest{
-			Address:    serviceAddress,
-			EngineName: engineName,
+			Address:            serviceAddress,
+			EngineName:         engineName,
+			EngineFrontendName: engineFrontendName,
 			// nolint:all replaced with DataEngine
 			BackendStoreDriver: rpc.BackendStoreDriver(driver),
 			DataEngine:         rpc.DataEngine(driver),
@@ -295,7 +320,9 @@ func (c *ProxyClient) SnapshotPurge(dataEngine, engineName, volumeName, serviceA
 		},
 		SkipIfInProgress: skipIfInProgress,
 	}
-	_, err = c.service.SnapshotPurge(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.SnapshotPurge(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -303,7 +330,7 @@ func (c *ProxyClient) SnapshotPurge(dataEngine, engineName, volumeName, serviceA
 	return nil
 }
 
-func (c *ProxyClient) SnapshotPurgeStatus(dataEngine, engineName, volumeName, serviceAddress string) (status map[string]*SnapshotPurgeStatus, err error) {
+func (c *ProxyClient) SnapshotPurgeStatus(dataEngine, engineName, engineFrontendName, volumeName, serviceAddress string) (status map[string]*SnapshotPurgeStatus, err error) {
 	input := map[string]string{
 		"engineName":     engineName,
 		"volumeName":     volumeName,
@@ -323,15 +350,18 @@ func (c *ProxyClient) SnapshotPurgeStatus(dataEngine, engineName, volumeName, se
 	}()
 
 	req := &rpc.ProxyEngineRequest{
-		Address:    serviceAddress,
-		EngineName: engineName,
+		Address:            serviceAddress,
+		EngineName:         engineName,
+		EngineFrontendName: engineFrontendName,
 		// nolint:all replaced with DataEngine
 		BackendStoreDriver: rpc.BackendStoreDriver(driver),
 		DataEngine:         rpc.DataEngine(driver),
 		VolumeName:         volumeName,
 	}
 
-	recv, err := c.service.SnapshotPurgeStatus(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	recv, err := c.service.SnapshotPurgeStatus(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -348,12 +378,15 @@ func (c *ProxyClient) SnapshotPurgeStatus(dataEngine, engineName, volumeName, se
 	return status, nil
 }
 
-func (c *ProxyClient) SnapshotRemove(dataEngine, engineName, volumeName, serviceAddress string,
+func (c *ProxyClient) SnapshotRemove(dataEngine, engineName, engineFrontendName, volumeName, serviceAddress string,
 	names []string) (err error) {
 	input := map[string]string{
 		"engineName":     engineName,
 		"volumeName":     volumeName,
 		"serviceAddress": serviceAddress,
+	}
+	if dataEngine == dataEngineV2 {
+		input["engineFrontendName"] = engineFrontendName
 	}
 	if err := validateProxyMethodParameters(input); err != nil {
 		return errors.Wrapf(err, "failed to remove snapshot %v", names)
@@ -370,8 +403,9 @@ func (c *ProxyClient) SnapshotRemove(dataEngine, engineName, volumeName, service
 
 	req := &rpc.EngineSnapshotRemoveRequest{
 		ProxyEngineRequest: &rpc.ProxyEngineRequest{
-			Address:    serviceAddress,
-			EngineName: engineName,
+			Address:            serviceAddress,
+			EngineName:         engineName,
+			EngineFrontendName: engineFrontendName,
 			// nolint:all replaced with DataEngine
 			BackendStoreDriver: rpc.BackendStoreDriver(driver),
 			DataEngine:         rpc.DataEngine(driver),
@@ -379,7 +413,9 @@ func (c *ProxyClient) SnapshotRemove(dataEngine, engineName, volumeName, service
 		},
 		Names: names,
 	}
-	_, err = c.service.SnapshotRemove(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.SnapshotRemove(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -419,11 +455,12 @@ func (c *ProxyClient) SnapshotHash(dataEngine, engineName, volumeName, serviceAd
 		SnapshotName: snapshotName,
 		Rehash:       rehash,
 	}
-	_, err = c.service.SnapshotHash(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.SnapshotHash(ctx, req)
 	if err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -459,7 +496,9 @@ func (c *ProxyClient) SnapshotHashStatus(dataEngine, engineName, volumeName, ser
 		SnapshotName: snapshotName,
 	}
 
-	recv, err := c.service.SnapshotHashStatus(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	recv, err := c.service.SnapshotHashStatus(ctx, req)
 	if err != nil {
 		return nil, err
 	}

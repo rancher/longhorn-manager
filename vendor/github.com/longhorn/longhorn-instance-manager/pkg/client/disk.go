@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 
@@ -126,6 +126,7 @@ func (c *DiskServiceClient) DiskCreate(diskType, diskName, diskUUID, diskPath, d
 		FreeBlocks:  resp.GetFreeBlocks(),
 		BlockSize:   resp.GetBlockSize(),
 		ClusterSize: resp.GetClusterSize(),
+		State:       resp.GetState(),
 	}, nil
 }
 
@@ -167,6 +168,57 @@ func (c *DiskServiceClient) DiskGet(diskType, diskName, diskPath, diskDriver str
 		FreeBlocks:  resp.GetFreeBlocks(),
 		BlockSize:   resp.GetBlockSize(),
 		ClusterSize: resp.GetClusterSize(),
+		State:       resp.GetState(),
+	}, nil
+}
+
+// DiskHealthGet returns the disk health info with the given name, path and driver.
+func (c *DiskServiceClient) DiskHealthGet(diskType, diskName, diskPath, diskDriver string) (*api.DiskHealth, error) {
+	if diskName == "" {
+		return nil, fmt.Errorf("failed to get disk health info: missing required parameter diskName")
+	}
+
+	t, ok := rpc.DiskType_value[diskType]
+	if !ok {
+		return nil, fmt.Errorf("failed to get disk health info: invalid disk type %v", diskType)
+	}
+
+	client := c.getDiskServiceClient()
+	ctx, cancel := context.WithTimeout(context.Background(), types.GRPCServiceTimeout)
+	defer cancel()
+
+	resp, err := client.DiskHealthGet(ctx, &rpc.DiskHealthGetRequest{
+		DiskType:   rpc.DiskType(t),
+		DiskName:   diskName,
+		DiskPath:   diskPath,
+		DiskDriver: diskDriver,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &api.DiskHealth{
+		ModelNumber:                             resp.GetModelNumber(),
+		SerialNumber:                            resp.GetSerialNumber(),
+		FirmwareRevision:                        resp.GetFirmwareRevision(),
+		Traddr:                                  resp.GetTraddr(),
+		CriticalWarning:                         resp.GetCriticalWarning(),
+		TemperatureCelsius:                      resp.GetTemperatureCelsius(),
+		AvailableSparePercentage:                resp.GetAvailableSparePercentage(),
+		AvailableSpareThresholdPercentage:       resp.GetAvailableSpareThresholdPercentage(),
+		PercentageUsed:                          resp.GetPercentageUsed(),
+		DataUnitsRead:                           resp.GetDataUnitsRead(),
+		DataUnitsWritten:                        resp.GetDataUnitsWritten(),
+		HostReadCommands:                        resp.GetHostReadCommands(),
+		HostWriteCommands:                       resp.GetHostWriteCommands(),
+		ControllerBusyTime:                      resp.GetControllerBusyTime(),
+		PowerCycles:                             resp.GetPowerCycles(),
+		PowerOnHours:                            resp.GetPowerOnHours(),
+		UnsafeShutdowns:                         resp.GetUnsafeShutdowns(),
+		MediaErrors:                             resp.GetMediaErrors(),
+		NumErrLogEntries:                        resp.GetNumErrLogEntries(),
+		WarningTemperatureTimeMinutes:           resp.GetWarningTemperatureTimeMinutes(),
+		CriticalCompositeTemperatureTimeMinutes: resp.GetCriticalCompositeTemperatureTimeMinutes(),
 	}, nil
 }
 
@@ -267,6 +319,44 @@ func (c *DiskServiceClient) VersionGet() (*meta.DiskServiceVersionOutput, error)
 
 func (c *DiskServiceClient) CheckConnection() error {
 	req := &healthpb.HealthCheckRequest{}
-	_, err := c.health.Check(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err := c.health.Check(ctx, req)
 	return err
+}
+
+// MetricsGet returns the disk metrics with the given name and path.
+func (c *DiskServiceClient) MetricsGet(diskType, diskName, diskPath, diskDriver string) (*api.DiskMetrics, error) {
+	if diskName == "" {
+		return nil, fmt.Errorf("failed to get disk metrics: missing required parameter diskName")
+	}
+
+	t, ok := rpc.DiskType_value[diskType]
+	if !ok {
+		return nil, fmt.Errorf("failed to get disk metrics: invalid disk type %v", diskType)
+	}
+
+	client := c.getDiskServiceClient()
+	ctx, cancel := context.WithTimeout(context.Background(), types.GRPCServiceTimeout)
+	defer cancel()
+
+	resp, err := client.MetricsGet(ctx, &rpc.DiskGetRequest{
+		DiskType:   rpc.DiskType(t),
+		DiskName:   diskName,
+		DiskPath:   diskPath,
+		DiskDriver: diskDriver,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to api.DiskMetrics format
+	return &api.DiskMetrics{
+		ReadThroughput:  resp.Metrics.ReadThroughput,
+		WriteThroughput: resp.Metrics.WriteThroughput,
+		ReadLatency:     resp.Metrics.ReadLatency,
+		WriteLatency:    resp.Metrics.WriteLatency,
+		ReadIOPS:        resp.Metrics.ReadIOPS,
+		WriteIOPS:       resp.Metrics.WriteIOPS,
+	}, nil
 }

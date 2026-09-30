@@ -1,13 +1,13 @@
 package client
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"time"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 
@@ -58,6 +58,7 @@ func (c *ProxyClient) Close() error {
 
 type ProxyClient struct {
 	ServiceURL string
+	tlsConfig  *tls.Config
 	ServiceContext
 
 	Version int
@@ -87,6 +88,7 @@ func NewProxyClient(ctx context.Context, ctxCancel context.CancelFunc, address s
 
 	return &ProxyClient{
 		ServiceURL:     serviceURL,
+		tlsConfig:      tlsConfig,
 		ServiceContext: serviceCtx,
 		Version:        meta.InstanceManagerProxyAPIVersion,
 	}, nil
@@ -107,21 +109,20 @@ const (
 	GRPCServiceLongTimeout = eclient.GRPCServiceLongTimeout + GRPCServiceTimeout
 )
 
-func getContextWithGRPCTimeout(parent context.Context) context.Context {
-	ctx, _ := context.WithTimeout(parent, GRPCServiceTimeout)
-	return ctx
+func getContextWithGRPCTimeout(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(parent, GRPCServiceTimeout)
+	return ctx, cancel
 }
 
 // getContextWithGRPCLongTimeout returns a context with given grpcTimeoutSeconds + GRPCServiceTimeout timeout.
 // If grpcTimeoutSeconds is 0, use the default GRPCServiceLongTimeout instead.
-func getContextWithGRPCLongTimeout(parent context.Context, grpcTimeoutSeconds int64) context.Context {
+func getContextWithGRPCLongTimeout(parent context.Context, grpcTimeoutSeconds int64) (context.Context, context.CancelFunc) {
 	grpcTimeout := GRPCServiceLongTimeout
 	if grpcTimeoutSeconds > 0 {
 		// We want to have a slightly bigger timeout on the proxy client-side compared to the actual timeout in the engine/replica because the proxy server adds some delay to the flow
 		grpcTimeout = (time.Second * time.Duration(grpcTimeoutSeconds)) + GRPCServiceTimeout
 	}
-	ctx, _ := context.WithTimeout(parent, grpcTimeout)
-	return ctx
+	return context.WithTimeout(parent, grpcTimeout)
 }
 
 func (c *ProxyClient) getProxyErrorPrefix(destination string) string {
@@ -143,7 +144,9 @@ func (c *ProxyClient) ServerVersionGet(serviceAddress string) (version *emeta.Ve
 	req := &rpc.ProxyEngineRequest{
 		Address: serviceAddress,
 	}
-	resp, err := c.service.ServerVersionGet(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	resp, err := c.service.ServerVersionGet(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +173,8 @@ func (c *ProxyClient) ClientVersionGet() (version emeta.VersionOutput) {
 
 func (c *ProxyClient) CheckConnection() error {
 	req := &healthpb.HealthCheckRequest{}
-	_, err := c.health.Check(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err := c.health.Check(ctx, req)
 	return err
 }

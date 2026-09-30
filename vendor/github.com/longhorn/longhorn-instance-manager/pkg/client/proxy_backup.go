@@ -4,14 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	rpc "github.com/longhorn/types/pkg/generated/imrpc"
 )
 
 func (c *ProxyClient) CleanupBackupMountPoints() (err error) {
-	_, err = c.service.CleanupBackupMountPoints(getContextWithGRPCTimeout(c.ctx), &emptypb.Empty{})
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.CleanupBackupMountPoints(ctx, &emptypb.Empty{})
 	if err != nil {
 		return err
 	}
@@ -60,11 +62,12 @@ func (c *ProxyClient) SnapshotBackup(dataEngine, engineName, volumeName, service
 		Labels:               labels,
 		Parameters:           parameters,
 	}
-	recv, err := c.service.SnapshotBackup(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	recv, err := c.service.SnapshotBackup(ctx, req)
 	if err != nil {
 		return "", "", err
 	}
-
 	return recv.BackupId, recv.Replica, nil
 }
 
@@ -104,7 +107,9 @@ func (c *ProxyClient) SnapshotBackupStatus(dataEngine, engineName, volumeName, s
 		// validation failure and this may change in the future.
 		ReplicaName: replicaName,
 	}
-	recv, err := c.service.SnapshotBackupStatus(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	recv, err := c.service.SnapshotBackupStatus(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +126,7 @@ func (c *ProxyClient) SnapshotBackupStatus(dataEngine, engineName, volumeName, s
 }
 
 func (c *ProxyClient) BackupRestore(dataEngine, engineName, volumeName, serviceAddress, url, target,
-	backupVolumeName string, envs []string, concurrentLimit int) (err error) {
+	backupVolumeName string, envs []string, concurrentLimit int, needCorrectEncryptedVolumeSize bool) (err error) {
 	input := map[string]string{
 		"engineName":       engineName,
 		"volumeName":       volumeName,
@@ -163,8 +168,12 @@ func (c *ProxyClient) BackupRestore(dataEngine, engineName, volumeName, serviceA
 		// Historically, we have passed backupVolumeName as VolumeName here.
 		VolumeName:      backupVolumeName,
 		ConcurrentLimit: int32(concurrentLimit),
+
+		NeedCorrectEncryptedVolumeSize: needCorrectEncryptedVolumeSize,
 	}
-	recv, err := c.service.BackupRestore(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	recv, err := c.service.BackupRestore(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -210,7 +219,9 @@ func (c *ProxyClient) BackupRestoreStatus(dataEngine, engineName, volumeName, se
 		EngineName:         engineName,
 		VolumeName:         volumeName,
 	}
-	recv, err := c.service.BackupRestoreStatus(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	recv, err := c.service.BackupRestoreStatus(ctx, req)
 	if err != nil {
 		return nil, err
 	}

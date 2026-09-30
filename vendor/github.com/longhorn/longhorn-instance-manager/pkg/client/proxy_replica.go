@@ -3,15 +3,15 @@ package client
 import (
 	"fmt"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 
 	etypes "github.com/longhorn/longhorn-engine/pkg/types"
 	rpc "github.com/longhorn/types/pkg/generated/imrpc"
 )
 
-func (c *ProxyClient) ReplicaAdd(dataEngine, engineName, volumeName, serviceAddress, replicaName,
+func (c *ProxyClient) ReplicaAdd(dataEngine, engineName, engineFrontendName, volumeName, serviceAddress, replicaName,
 	replicaAddress string, restore bool, size, currentSize int64, fileSyncHTTPClientTimeout int,
-	fastSync bool, localSync *etypes.FileLocalSync, grpcTimeoutSeconds int64) (err error) {
+	fastSync bool, localSync *etypes.FileLocalSync, linkedCloneSource *rpc.LinkedCloneSource, grpcTimeoutSeconds int64) (err error) {
 	input := map[string]string{
 		"engineName":     engineName,
 		"volumeName":     volumeName,
@@ -38,8 +38,9 @@ func (c *ProxyClient) ReplicaAdd(dataEngine, engineName, volumeName, serviceAddr
 
 	req := &rpc.EngineReplicaAddRequest{
 		ProxyEngineRequest: &rpc.ProxyEngineRequest{
-			Address:    serviceAddress,
-			EngineName: engineName,
+			Address:            serviceAddress,
+			EngineName:         engineName,
+			EngineFrontendName: engineFrontendName,
 			// nolint:all replaced with DataEngine
 			BackendStoreDriver: rpc.BackendStoreDriver(driver),
 			DataEngine:         rpc.DataEngine(driver),
@@ -53,6 +54,7 @@ func (c *ProxyClient) ReplicaAdd(dataEngine, engineName, volumeName, serviceAddr
 		FastSync:                  fastSync,
 		FileSyncHttpClientTimeout: int32(fileSyncHTTPClientTimeout),
 		GrpcTimeoutSeconds:        grpcTimeoutSeconds,
+		LinkedCloneSource:         linkedCloneSource,
 	}
 
 	if localSync != nil {
@@ -62,7 +64,9 @@ func (c *ProxyClient) ReplicaAdd(dataEngine, engineName, volumeName, serviceAddr
 		}
 	}
 
-	_, err = c.service.ReplicaAdd(getContextWithGRPCLongTimeout(c.ctx, grpcTimeoutSeconds), req)
+	ctx, cancel := getContextWithGRPCLongTimeout(c.ctx, grpcTimeoutSeconds)
+	defer cancel()
+	_, err = c.service.ReplicaAdd(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -98,7 +102,9 @@ func (c *ProxyClient) ReplicaList(dataEngine, engineName, volumeName,
 		DataEngine:         rpc.DataEngine(driver),
 		VolumeName:         volumeName,
 	}
-	resp, err := c.service.ReplicaList(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	resp, err := c.service.ReplicaList(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +147,9 @@ func (c *ProxyClient) ReplicaRebuildingStatus(dataEngine, engineName, volumeName
 		DataEngine:         rpc.DataEngine(driver),
 		VolumeName:         volumeName,
 	}
-	recv, err := c.service.ReplicaRebuildingStatus(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	recv, err := c.service.ReplicaRebuildingStatus(ctx, req)
 	if err != nil {
 		return status, err
 	}
@@ -149,14 +157,51 @@ func (c *ProxyClient) ReplicaRebuildingStatus(dataEngine, engineName, volumeName
 	status = make(map[string]*ReplicaRebuildStatus)
 	for k, v := range recv.Status {
 		status[k] = &ReplicaRebuildStatus{
-			Error:              v.Error,
-			IsRebuilding:       v.IsRebuilding,
-			Progress:           int(v.Progress),
-			State:              v.State,
-			FromReplicaAddress: v.FromReplicaAddress,
+			Error:                  v.Error,
+			IsRebuilding:           v.IsRebuilding,
+			Progress:               int(v.Progress),
+			State:                  v.State,
+			FromReplicaAddressList: v.FromReplicaAddressList,
 		}
 	}
 	return status, nil
+}
+
+func (c *ProxyClient) ReplicaRebuildingQosSet(dataEngine, engineName, volumeName,
+	serviceAddress string, qosLimitMbps int64) (err error) {
+	input := map[string]string{
+		"engineName":     engineName,
+		"volumeName":     volumeName,
+		"serviceAddress": serviceAddress,
+	}
+	if err := validateProxyMethodParameters(input); err != nil {
+		return errors.Wrap(err, "failed to set replicas rebuilding qos set")
+	}
+
+	driver, ok := rpc.DataEngine_value[getDataEngine(dataEngine)]
+	if !ok {
+		return fmt.Errorf("failed to set replicas rebuilding qos set: invalid data engine %v", dataEngine)
+	}
+
+	defer func() {
+		err = errors.Wrapf(err, "%v failed to set replicas rebuilding qos set", c.getProxyErrorPrefix(serviceAddress))
+	}()
+
+	req := &rpc.EngineReplicaRebuildingQosSetRequest{
+		ProxyEngineRequest: &rpc.ProxyEngineRequest{
+			Address:    serviceAddress,
+			EngineName: engineName,
+			// nolint:all replaced with DataEngine
+			BackendStoreDriver: rpc.BackendStoreDriver(driver),
+			DataEngine:         rpc.DataEngine(driver),
+			VolumeName:         volumeName,
+		},
+		QosLimitMbps: qosLimitMbps,
+	}
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.ReplicaRebuildingQosSet(ctx, req)
+	return err
 }
 
 func (c *ProxyClient) ReplicaVerifyRebuild(dataEngine, engineName, volumeName, serviceAddress,
@@ -193,7 +238,9 @@ func (c *ProxyClient) ReplicaVerifyRebuild(dataEngine, engineName, volumeName, s
 		ReplicaAddress: replicaAddress,
 		ReplicaName:    replicaName,
 	}
-	_, err = c.service.ReplicaVerifyRebuild(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.ReplicaVerifyRebuild(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -234,7 +281,9 @@ func (c *ProxyClient) ReplicaRemove(dataEngine, serviceAddress, engineName, repl
 		ReplicaAddress: replicaAddress,
 		ReplicaName:    replicaName,
 	}
-	_, err = c.service.ReplicaRemove(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.ReplicaRemove(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -270,10 +319,86 @@ func (c *ProxyClient) ReplicaModeUpdate(dataEngine, serviceAddress, replicaAddre
 		ReplicaAddress: replicaAddress,
 		Mode:           etypes.ReplicaModeToGRPCReplicaMode(etypes.Mode(mode)),
 	}
-	_, err = c.service.ReplicaModeUpdate(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.ReplicaModeUpdate(ctx, req)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (c *ProxyClient) ReplicaRebuildConcurrentSyncLimitSet(dataEngine, engineName, volumeName, serviceAddress string,
+	limit int) (err error) {
+	input := map[string]string{
+		"engineName":     engineName,
+		"volumeName":     volumeName,
+		"serviceAddress": serviceAddress,
+	}
+	if err := validateProxyMethodParameters(input); err != nil {
+		return errors.Wrap(err, "failed to set replica rebuilding concurrent sync limit")
+	}
+
+	driver, ok := rpc.DataEngine_value[getDataEngine(dataEngine)]
+	if !ok {
+		return fmt.Errorf("failed to set replica rebuilding concurrent sync limit: invalid data engine %v", dataEngine)
+	}
+
+	defer func() {
+		err = errors.Wrapf(err, "%v failed to set replica rebuilding concurrent sync limit", c.getProxyErrorPrefix(serviceAddress))
+	}()
+
+	req := &rpc.EngineReplicaRebuildConcurrentSyncLimitSetRequest{
+		ProxyEngineRequest: &rpc.ProxyEngineRequest{
+			Address:    serviceAddress,
+			EngineName: engineName,
+			DataEngine: rpc.DataEngine(driver),
+			VolumeName: volumeName,
+		},
+		Limit: int32(limit),
+	}
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	if _, err = c.service.ReplicaRebuildConcurrentSyncLimitSet(ctx, req); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *ProxyClient) ReplicaRebuildConcurrentSyncLimitGet(dataEngine, engineName, volumeName,
+	serviceAddress string) (limit int, err error) {
+	input := map[string]string{
+		"engineName":     engineName,
+		"volumeName":     volumeName,
+		"serviceAddress": serviceAddress,
+	}
+	if err := validateProxyMethodParameters(input); err != nil {
+		return 0, errors.Wrap(err, "failed to get replica rebuilding concurrent sync limit")
+	}
+
+	driver, ok := rpc.DataEngine_value[getDataEngine(dataEngine)]
+	if !ok {
+		return 0, fmt.Errorf("failed to get replica rebuilding concurrent sync limit: invalid data engine %v", dataEngine)
+	}
+
+	defer func() {
+		err = errors.Wrapf(err, "%v failed to get replica rebuilding concurrent sync limit", c.getProxyErrorPrefix(serviceAddress))
+	}()
+	req := &rpc.ProxyEngineRequest{
+		Address:    serviceAddress,
+		EngineName: engineName,
+		DataEngine: rpc.DataEngine(driver),
+		VolumeName: volumeName,
+	}
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	resp, err := c.service.ReplicaRebuildConcurrentSyncLimitGet(ctx, req)
+	if err != nil {
+		return 0, err
+	}
+
+	limit = int(resp.Limit)
+	return limit, nil
 }

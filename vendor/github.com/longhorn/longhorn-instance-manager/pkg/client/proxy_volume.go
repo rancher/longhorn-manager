@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/pkg/errors"
+	"github.com/cockroachdb/errors"
 
 	etypes "github.com/longhorn/longhorn-engine/pkg/types"
 	"github.com/longhorn/types/pkg/generated/enginerpc"
 	rpc "github.com/longhorn/types/pkg/generated/imrpc"
 )
 
-func (c *ProxyClient) VolumeGet(dataEngine, engineName, volumeName, serviceAddress string) (info *etypes.VolumeInfo, err error) {
+func (c *ProxyClient) VolumeGet(dataEngine, engineName, engineFrontendName, volumeName, serviceAddress string) (info *etypes.VolumeInfo, err error) {
 	input := map[string]string{
 		"engineName":     engineName,
 		"volumeName":     volumeName,
@@ -31,14 +31,17 @@ func (c *ProxyClient) VolumeGet(dataEngine, engineName, volumeName, serviceAddre
 	}()
 
 	req := &rpc.ProxyEngineRequest{
-		Address:    serviceAddress,
-		EngineName: engineName,
+		Address:            serviceAddress,
+		EngineName:         engineName,
+		EngineFrontendName: engineFrontendName,
 		// nolint:all replaced with DataEngine
 		BackendStoreDriver: rpc.BackendStoreDriver(driver),
 		DataEngine:         rpc.DataEngine(driver),
 		VolumeName:         volumeName,
 	}
-	resp, err := c.service.VolumeGet(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	resp, err := c.service.VolumeGet(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -60,12 +63,15 @@ func (c *ProxyClient) VolumeGet(dataEngine, engineName, volumeName, serviceAddre
 	return info, nil
 }
 
-func (c *ProxyClient) VolumeExpand(dataEngine, engineName, volumeName, serviceAddress string,
+func (c *ProxyClient) VolumeExpand(dataEngine, engineName, engineFrontendName, volumeName, serviceAddress string,
 	size int64) (err error) {
 	input := map[string]string{
 		"engineName":     engineName,
 		"volumeName":     volumeName,
 		"serviceAddress": serviceAddress,
+	}
+	if dataEngine == dataEngineV2 {
+		input["engineFrontendName"] = engineFrontendName
 	}
 	if err := validateProxyMethodParameters(input); err != nil {
 		return errors.Wrap(err, "failed to expand volume")
@@ -82,8 +88,9 @@ func (c *ProxyClient) VolumeExpand(dataEngine, engineName, volumeName, serviceAd
 
 	req := &rpc.EngineVolumeExpandRequest{
 		ProxyEngineRequest: &rpc.ProxyEngineRequest{
-			Address:    serviceAddress,
-			EngineName: engineName,
+			Address:            serviceAddress,
+			EngineName:         engineName,
+			EngineFrontendName: engineFrontendName,
 			// nolint:all replaced with DataEngine
 			BackendStoreDriver: rpc.BackendStoreDriver(driver),
 			DataEngine:         rpc.DataEngine(driver),
@@ -93,7 +100,9 @@ func (c *ProxyClient) VolumeExpand(dataEngine, engineName, volumeName, serviceAd
 			Size: size,
 		},
 	}
-	_, err = c.service.VolumeExpand(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.VolumeExpand(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -134,7 +143,9 @@ func (c *ProxyClient) VolumeFrontendStart(dataEngine, engineName, volumeName, se
 			Frontend: frontendName,
 		},
 	}
-	_, err = c.service.VolumeFrontendStart(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.VolumeFrontendStart(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -169,7 +180,9 @@ func (c *ProxyClient) VolumeFrontendShutdown(dataEngine, engineName, volumeName,
 		DataEngine:         rpc.DataEngine(driver),
 		VolumeName:         volumeName,
 	}
-	_, err = c.service.VolumeFrontendShutdown(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.VolumeFrontendShutdown(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -208,7 +221,9 @@ func (c *ProxyClient) VolumeUnmapMarkSnapChainRemovedSet(dataEngine, engineName,
 		},
 		UnmapMarkSnap: &enginerpc.VolumeUnmapMarkSnapChainRemovedSetRequest{Enabled: enabled},
 	}
-	_, err = c.service.VolumeUnmapMarkSnapChainRemovedSet(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.VolumeUnmapMarkSnapChainRemovedSet(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -248,7 +263,9 @@ func (c *ProxyClient) VolumeSnapshotMaxCountSet(dataEngine, engineName, volumeNa
 		},
 		Count: &enginerpc.VolumeSnapshotMaxCountSetRequest{Count: int32(count)},
 	}
-	_, err = c.service.VolumeSnapshotMaxCountSet(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.VolumeSnapshotMaxCountSet(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -288,7 +305,9 @@ func (c *ProxyClient) VolumeSnapshotMaxSizeSet(dataEngine, engineName, volumeNam
 		},
 		Size: &enginerpc.VolumeSnapshotMaxSizeSetRequest{Size: size},
 	}
-	_, err = c.service.VolumeSnapshotMaxSizeSet(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.VolumeSnapshotMaxSizeSet(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -305,9 +324,12 @@ func (c *ProxyClient) RemountReadOnlyVolume(volumeName string) (err error) {
 		VolumeName: volumeName,
 	}
 
-	_, err = c.service.RemountReadOnlyVolume(getContextWithGRPCTimeout(c.ctx), req)
+	ctx, cancel := getContextWithGRPCTimeout(c.ctx)
+	defer cancel()
+	_, err = c.service.RemountReadOnlyVolume(ctx, req)
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
