@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cockroachdb/errors"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
