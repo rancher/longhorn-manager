@@ -50,8 +50,9 @@ jobs:
     with:
       configMigration: ${{ inputs.configMigration || 'true' }}
       logLevel: ${{ inputs.logLevel || 'info' }}
-      overrideSchedule: ${{ github.event.inputs.overrideSchedule == 'true' && '{''schedule'':null}' || '' }}
+      overrideSchedule: ${{ inputs.overrideSchedule || 'false' }}
       renovateConfig: ${{ inputs.renovateConfig || 'renovate.json' }}
       minimumReleaseAge: ${{ inputs.minimumReleaseAge || 'null' }}
     secrets:
       override-token: "${{ secrets.RENOVATE_FORK_GH_TOKEN || '' }}"
+
