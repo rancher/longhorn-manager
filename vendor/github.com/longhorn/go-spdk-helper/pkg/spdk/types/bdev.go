@@ -1,5 +1,11 @@
 package types
 
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+)
+
 type BdevProductName string
 
 const (
@@ -9,6 +15,7 @@ const (
 	BdevProductNameNvme       = BdevProductName("NVMe disk")
 	BdevProductNameVirtioBlk  = BdevProductName("VirtioBlk Disk")
 	BdevProductNameVirtioScsi = BdevProductName("Virtio SCSI Disk")
+	BdevProductNameEc         = BdevProductName("ErasureCode Volume")
 )
 
 type BdevType string
@@ -18,6 +25,7 @@ const (
 	BdevTypeLvol = "lvol"
 	BdevTypeRaid = "raid"
 	BdevTypeNvme = "nvme"
+	BdevTypeEc   = "ec"
 )
 
 func GetBdevType(bdev *BdevInfo) BdevType {
@@ -35,6 +43,9 @@ func GetBdevType(bdev *BdevInfo) BdevType {
 	}
 	if bdev.ProductName == BdevProductNameNvme && bdev.DriverSpecific.Nvme != nil {
 		return BdevTypeNvme
+	}
+	if bdev.ProductName == BdevProductNameEc && bdev.DriverSpecific.Ec != nil {
+		return BdevTypeEc
 	}
 	return ""
 }
@@ -70,10 +81,40 @@ type BdevInfoBasic struct {
 
 	SupportedIoTypes SupportedIoTypes `json:"supported_io_types"`
 
-	MemoryDomains []struct {
-		DmaDeviceID   string `json:"dma_device_id"`
-		DmaDeviceType int32  `json:"dma_device_type"`
-	} `json:"memory_domains,omitempty"`
+	MemoryDomains []BdevMemoryDomain `json:"memory_domains,omitempty"`
+}
+
+type BdevMemoryDomain struct {
+	DmaDeviceType string `json:"dma_device_type"`
+}
+
+// UnmarshalJSON keeps SPDK v25.09 (int32) and v26.05 (string) bdev output compatible
+// It is the safe way to handle both old and new SPDK JSON formats for the dma_device_type field.
+func (m *BdevMemoryDomain) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		DmaDeviceType json.RawMessage `json:"dma_device_type"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	if len(raw.DmaDeviceType) == 0 || string(raw.DmaDeviceType) == "null" {
+		return nil
+	}
+
+	var dmaDeviceType string
+	if err := json.Unmarshal(raw.DmaDeviceType, &dmaDeviceType); err == nil {
+		m.DmaDeviceType = dmaDeviceType
+		return nil
+	}
+
+	var legacyDmaDeviceType int32
+	if err := json.Unmarshal(raw.DmaDeviceType, &legacyDmaDeviceType); err == nil {
+		m.DmaDeviceType = strconv.FormatInt(int64(legacyDmaDeviceType), 10)
+		return nil
+	}
+
+	return fmt.Errorf("cannot unmarshal %s into Go struct field BdevMemoryDomain.dma_device_type of type string", raw.DmaDeviceType)
 }
 
 type AssignedRateLimits struct {
@@ -116,6 +157,12 @@ type BdevDriverSpecific struct {
 
 	Nvme     *BdevDriverSpecificNvme `json:"nvme,omitempty"`
 	MpPolicy BdevNvmeMultipathPolicy `json:"mp_policy,omitempty"`
+
+	// Ec is populated from driver_specific.ec in bdev_get_bdevs output and is used
+	// by GetBdevType only as a presence check. That object uses different JSON keys
+	// than the bdev_ec_get_bdevs RPC (e.g. data_chunk_count, not k) and omits the
+	// counters, so read full EC fields via BdevEcGetBdevs, not through this field.
+	Ec *BdevEcInfo `json:"ec,omitempty"`
 }
 
 type BdevInfo struct {
